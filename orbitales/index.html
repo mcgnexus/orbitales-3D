@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Orbitales f · Visualizador 3D</title>
+  <style>
+    :root{--bg1:#0e1025;--bg2:#1b1d36;--panel:#111429e6;--text:#e9ecff;--muted:#9aa}
+    *{box-sizing:border-box;margin:0}
+    html,body{height:100%}
+    body{background:radial-gradient(1200px 800px at 20% 10%,var(--bg2),var(--bg1));color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial,"Noto Sans";overflow:hidden}
+    #app{position:fixed;inset:0}
+    canvas{display:block}
+    .ui{position:fixed;top:16px;right:16px;width:320px;max-width:calc(100vw - 32px);background:var(--panel);backdrop-filter:blur(10px);border:1px solid #23264d;border-radius:16px;padding:14px 14px 8px;z-index:10;box-shadow:0 10px 28px rgba(0,0,0,.45)}
+    .ui h1{font-size:16px;margin-bottom:8px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+    .row-1{display:grid;gap:8px;margin-bottom:8px}
+    label{font-size:12px;color:var(--muted);margin-bottom:4px;display:block}
+    select,input[type=range],button{width:100%;border-radius:10px;border:1px solid #2b2e57;background:#0e1131;color:var(--text);padding:10px;font-size:13px;outline:none}
+    select:focus,input[type=range]:focus,button:focus{box-shadow:0 0 0 2px #5b6cff55}
+    input[type=range]{padding:0;height:32px}
+    .chk{display:flex;align-items:center;gap:8px}
+    .chk input{width:18px;height:18px}
+    .footer{display:flex;gap:8px}
+    .btn{cursor:pointer;display:inline-flex;gap:6px;align-items:center;justify-content:center}
+    .btn svg{width:16px;height:16px;opacity:.9}
+    .credit{position:fixed;left:12px;bottom:10px;font-size:12px;color:#8d94d3}
+    .legend{font-size:12px;color:var(--muted)}
+    .badge{display:inline-block;padding:2px 8px;font-size:11px;border:1px solid #2b2e57;border-radius:999px;color:#cbd2ff;margin-left:6px}
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div class="ui">
+    <h1>Orbitales <strong>f</strong> · 3D <span class="badge">WebGL</span></h1>
+    <div class="row">
+      <div>
+        <label for="mode">Modo</label>
+        <select id="mode">
+          <option value="spherical">Armónicos esféricos (l = 3)</option>
+          <option value="cubic">Formas cúbicas (química)</option>
+        </select>
+      </div>
+      <div>
+        <label for="variant">Variante</label>
+        <select id="variant"></select>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="scale">Escala radial: <span id="scaleVal">1.00</span></label>
+        <input id="scale" type="range" min="0.4" max="3" step="0.01" value="1">
+      </div>
+      <div>
+        <label for="res">Resolución: <span id="resVal">80×160</span></label>
+        <input id="res" type="range" min="40" max="120" step="8" value="80">
+      </div>
+    </div>
+    <div class="row-1">
+      <div class="chk"><input type="checkbox" id="wire"><span>Wireframe</span></div>
+      <div class="chk"><input type="checkbox" id="autoRot" checked><span>Rotación auto</span></div>
+      <div class="legend">Azul = positivo · Magenta = negativo.</div>
+    </div>
+    <div class="footer">
+      <button class="btn" id="resetBtn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v2a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>Recentrar</button>
+      <button class="btn" id="shotBtn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM5 4h14v6h-4l-2 3-2-3H5V4z"/></svg>PNG</button>
+    </div>
+  </div>
+  <div class="credit">Arrastra para rotar · Rueda para zoom</div>
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.159.0/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.159.0/examples/jsm/controls/OrbitControls.js';
+    const TAU = Math.PI * 2;
+    const clamp = (x,a,b)=>Math.max(a,Math.min(b,x));
+    const colorFor = v => {
+      const t = 0.5*(Math.tanh(v)+1);
+      const pos = new THREE.Color().setHSL(0.58,0.75,0.55);
+      const neg = new THREE.Color().setHSL(0.83,0.75,0.55);
+      return pos.lerp(neg,1-t);
+    };
+    const spherical = [
+      {id:'m-3', n:'m = -3'},{id:'m-2', n:'m = -2'},{id:'m-1', n:'m = -1'},
+      {id:'m0',  n:'m = 0' },{id:'m1',  n:'m = +1'},{id:'m2',  n:'m = +2'},{id:'m3',  n:'m = +3'}
+    ];
+    const cubic = [
+      {id:'fz3',    n:'z(5z²-3)' },{id:'fxz2',   n:'x(5z²-1)' },{id:'fyz2',   n:'y(5z²-1)'},
+      {id:'fxyz',   n:'xyz'      },{id:'fx3my2', n:'x(x²-3y²)'},{id:'fy3mx2', n:'y(3x²-y²)'},
+      {id:'fzx2my2',n:'z(x²-y²)'}
+    ];
+    function Y3(th,ph,id){
+      const ct=Math.cos(th),st=Math.sin(th);
+      switch(id){
+        case'm0':  return .25*(5*ct*ct*ct-3*ct);
+        case'm1':  return st*(5*ct*ct-1)*Math.cos(ph);
+        case'm-1': return st*(5*ct*ct-1)*Math.sin(ph);
+        case'm2':  return st*st*ct*Math.cos(2*ph);
+        case'm-2': return st*st*ct*Math.sin(2*ph);
+        case'm3':  return st**3*Math.cos(3*ph);
+        case'm-3': return st**3*Math.sin(3*ph);
+        default:   return 0;
+      }
+    }
+    function cubicH(th,ph,id){
+      const st=Math.sin(th),ct=Math.cos(th),x=st*Math.cos(ph),y=st*Math.sin(ph),z=ct;
+      switch(id){
+        case'fz3':     return z*(5*z*z-3);
+        case'fxz2':    return x*(5*z*z-1);
+        case'fyz2':    return y*(5*z*z-1);
+        case'fxyz':    return x*y*z;
+        case'fx3my2':  return x*(x*x-3*y*y);
+        case'fy3mx2':  return y*(3*x*x-y*y);
+        case'fzx2my2': return z*(x*x-y*y);
+        default:       return 0;
+      }
+    }
+    const $ = id => document.getElementById(id);
+    const modeEl = $('mode');
+    const variantEl = $('variant');
+    const scaleEl = $('scale');
+    const scaleValEl = $('scaleVal');
+    const resEl = $('res');
+    const resValEl = $('resVal');
+    const wireEl = $('wire');
+    const autoEl = $('autoRot');
+    const resetBtn = $('resetBtn');
+    const shotBtn = $('shotBtn');
+    function populateVariants(){
+      const list = modeEl.value==='spherical'?spherical:cubic;
+      variantEl.innerHTML='';
+      for(const v of list){
+        const opt=document.createElement('option');
+        opt.value=v.id; opt.textContent=v.n;
+        variantEl.appendChild(opt);
+      }
+      variantEl.value=list[0].id;
+    }
+    populateVariants();
+    let mesh=null, wire=null;
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.getElementById('app').appendChild(renderer.domElement);
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x0e1025,0.08);
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.01, 100);
+    camera.position.set(2.4,1.7,2.6);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.07;
+    controls.minDistance = 1;
+    controls.maxDistance = 8;
+    scene.add(new THREE.HemisphereLight(0x9bbcff,0x202040,0.75));
+    const dir = new THREE.DirectionalLight(0xffffff,1.0);
+    dir.position.set(4,5,3);
+    scene.add(dir);
+    scene.add(new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.065,2),
+      new THREE.MeshStandardMaterial({ color:0xffcf4d, emissive:0x332100, roughness:0.35, metalness:0.1 })
+    ));
+    function rebuild(){
+      if(mesh){ scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
+      if(wire){ scene.remove(wire); wire.geometry.dispose(); wire.material.dispose(); }
+      const res = +resEl.value;
+      const w = res*2, h = res;
+      const verts = w*h;
+      const pos = new Float32Array(verts*3);
+      const col = new Float32Array(verts*3);
+      const vals = new Float32Array(verts);
+      let max = 0;
+      for(let iy=0; iy<h; iy++){
+        const th = (iy/(h-1))*Math.PI;
+        for(let ix=0; ix<w; ix++){
+          const ph = (ix/(w-1))*TAU;
+          const val = modeEl.value==='spherical'?Y3(th,ph,variantEl.value):cubicH(th,ph,variantEl.value);
+          vals[iy*w+ix]=val;
+          max=Math.max(max,Math.abs(val));
+        }
+      }
+      const inv = 1/Math.max(max,1e-6);
+      const scale = +scaleEl.value;
+      let p=0,cIdx=0;
+      for(let iy=0; iy<h; iy++){
+        const th = (iy/(h-1))*Math.PI;
+        const st = Math.sin(th), ct = Math.cos(th);
+        for(let ix=0; ix<w; ix++){
+          const ph = (ix/(w-1))*TAU;
+          const v = vals[iy*w+ix]*inv;
+          const r = clamp(Math.abs(v)*scale,0,10);
+          const x = r*st*Math.cos(ph);
+          const y = r*ct;
+          const z = r*st*Math.sin(ph);
+          pos[p++]=x; pos[p++]=y; pos[p++]=z;
+          const clr=colorFor(v);
+          col[cIdx++]=clr.r; col[cIdx++]=clr.g; col[cIdx++]=clr.b;
+        }
+      }
+      const idx=[];
+      for(let iy=0; iy<h-1; iy++){
+        for(let ix=0; ix<w-1; ix++){
+          const a=iy*w+ix, b=a+1, c=a+w, d=c+1;
+          idx.push(a,c,b, b,c,d);
+        }
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(pos,3));
+      geom.setAttribute('color', new THREE.BufferAttribute(col,3));
+      geom.setIndex(idx.length>65535?new Uint32Array(idx):new Uint16Array(idx));
+      geom.computeVertexNormals();
+      mesh = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.45, metalness:0.07, side:THREE.DoubleSide }));
+      scene.add(mesh);
+      wire = new THREE.LineSegments(new THREE.WireframeGeometry(geom), new THREE.LineBasicMaterial({ color:0xffffff, opacity:0.1, transparent:true }));
+      wire.visible = wireEl.checked;
+      scene.add(wire);
+    }
+    function updateLabels(){
+      scaleValEl.textContent=(+scaleEl.value).toFixed(2);
+      const r=+resEl.value;
+      resValEl.textContent=`${r}\u00D7${r*2}`;
+    }
+    modeEl.addEventListener('change', ()=>{populateVariants(); rebuild();});
+    variantEl.addEventListener('change', rebuild);
+    scaleEl.addEventListener('input', ()=>{updateLabels(); rebuild();});
+    resEl.addEventListener('input', ()=>{updateLabels(); rebuild();});
+    wireEl.addEventListener('change', ()=>{ if(wire) wire.visible=wireEl.checked; });
+    resetBtn.addEventListener('click', ()=>controls.reset());
+    shotBtn.addEventListener('click', ()=>{
+      renderer.render(scene,camera);
+      const a = document.createElement('a');
+      a.href = renderer.domElement.toDataURL('image/png');
+      a.download = 'orbital_f.png';
+      a.click();
+    });
+    updateLabels();
+    rebuild();
+    let t=0;
+    function loop(){
+      requestAnimationFrame(loop);
+      if(autoEl.checked && mesh){
+        t += 0.005;
+        mesh.rotation.y = t;
+        mesh.rotation.x = 0.15*Math.sin(t*0.7);
+      }
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    loop();
+    window.addEventListener('resize', ()=>{
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
